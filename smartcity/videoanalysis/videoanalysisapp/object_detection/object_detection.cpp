@@ -88,7 +88,9 @@ const int kCompareEqual = 0; // string compare equal
 const uint32_t kInputWidth = 512;
 const uint32_t kInputHeight = 512;
 
-const int kDvppProcSuccess = 0; // call dvpp success return.
+const int kDvppProcSuccess = 0; // call dvpp success return
+
+const int kVdecSingleton = 0; // dvpp vdec singleton parameter
 
 const string kModelPath = "model_path"; // model path item
 
@@ -109,21 +111,6 @@ HIAI_REGISTER_DATA_TYPE("DetectionEngineTransT", DetectionEngineTransT);
 ObjectDetectionInferenceEngine::ObjectDetectionInferenceEngine() {
   dvpp_api_channel1_ = nullptr;
   dvpp_api_channel2_ = nullptr;
-
-  CreateVdecApi(dvpp_api_channel1_, 0);
-  CreateVdecApi(dvpp_api_channel2_, 0);
-
-  if (dvpp_api_channel1_ == nullptr) { // check create dvpp api result
-    HIAI_ENGINE_LOG(
-        HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
-        "[ODInferenceEngine] fail to create dvpp vdec api for channel1!");
-  }
-
-  if (dvpp_api_channel2_ == nullptr) { // check create dvpp api result
-    HIAI_ENGINE_LOG(
-        HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
-        "[ODInferenceEngine] fail to create dvpp vdec api for channel2!");
-  }
 }
 
 ObjectDetectionInferenceEngine::~ObjectDetectionInferenceEngine() {
@@ -164,6 +151,19 @@ HIAI_StatusT ObjectDetectionInferenceEngine::Init(
     HIAI_ENGINE_LOG(HIAI_GRAPH_INVALID_VALUE,
                     "[ODInferenceEngine] failed to initialize AI model!");
     return HIAI_ERROR;
+  }
+
+  // create vdec api for channel1, and check the result
+  if (CreateVdecApi(dvpp_api_channel1_, kVdecSingleton) != kHandleSuccessful) {
+    HIAI_ENGINE_LOG(
+        HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+        "[ODInferenceEngine] fail to create dvpp vdec api for channel1!");
+  }
+  // create vdec api for channel2, and check the result
+  if (CreateVdecApi(dvpp_api_channel2_, kVdecSingleton) != kHandleSuccessful) {
+    HIAI_ENGINE_LOG(
+        HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+        "[ODInferenceEngine] fail to create dvpp vdec api for channel2!");
   }
 
   HIAI_ENGINE_LOG(HIAI_DEBUG_INFO, "[ODInferenceEngine] engine initialized!");
@@ -558,18 +558,29 @@ bool ObjectDetectionInferenceEngine::ConvertVideoFrameToHfbc(
     const shared_ptr<VideoImageParaT>& video_image) {
   IDVPPAPI* dvpp_api = nullptr;
   if (video_image->video_image_info.channel_id == kStrChannelId1) {
+    if (dvpp_api_channel1_ == nullptr) { // chech dvpp api is nullptr
+      // create vdec api for channel1, and check the result
+      if (CreateVdecApi(dvpp_api_channel1_, kVdecSingleton)
+          != kHandleSuccessful) {
+        HIAI_ENGINE_LOG(
+            HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+            "[ODInferenceEngine] fail to create dvpp vdec api for channel1!");
+        return false;
+      }
+    }
     dvpp_api = dvpp_api_channel1_;
   } else {
-    dvpp_api = dvpp_api_channel2_;
-  }
-
-  if (dvpp_api == nullptr) {
-    CreateVdecApi(dvpp_api, 0);
-    if (dvpp_api == nullptr) { // check create dvpp api result
-      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
-                      "[ODInferenceEngine] fail to create dvpp vdec api!");
-      return false;
+    if (dvpp_api_channel2_ == nullptr) { // chech dvpp api is nullptr
+      // create vdec api for channel2, and check the result
+      if (CreateVdecApi(dvpp_api_channel2_, kVdecSingleton)
+          != kHandleSuccessful) {
+        HIAI_ENGINE_LOG(
+            HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+            "[ODInferenceEngine] fail to create dvpp vdec api for channel2!");
+        return false;
+      }
     }
+    dvpp_api = dvpp_api_channel2_;
   }
 
   vdec_in_msg vdec_msg;
@@ -614,7 +625,6 @@ bool ObjectDetectionInferenceEngine::ConvertVideoFrameToHfbc(
     HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
                     "Fail to call dvppctl process, channel id:%s",
                     video_image->video_image_info.channel_id.c_str());
-    DestroyVdecApi(dvpp_api, 0);
     return false;
   }
 
