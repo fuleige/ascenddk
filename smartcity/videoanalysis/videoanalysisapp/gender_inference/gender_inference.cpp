@@ -44,9 +44,12 @@
 #include <hiaiengine/ai_types.h>
 #include "hiaiengine/ai_model_parser.h"
 
+using namespace std;
 namespace {
-// car type kind
-const string kGenderClass[2] = { "male", "female" };
+// total number of inference results
+const int kClassSum = 2;
+// gender type kind
+const string kGenderClass[kClassSum] = { "male", "female" };
 // time for waitting when send queue is full.
 const int kWaitTime = 20000;
 // the image width for model.
@@ -73,10 +76,16 @@ HIAI_StatusT GenderInferenceEngine::Init(
   hiai::AIStatus ret = hiai::SUCCESS;
 
   if (ai_model_manager_ == nullptr) {
-    ai_model_manager_ = std::make_shared<hiai::AIModelManager>();
+    MAKE_SHARED_NO_THROW(ai_model_manager_, hiai::AIModelManager);
+    if (ai_model_manager_ == nullptr) {
+      HIAI_ENGINE_LOG(
+          HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+          "[GenderInferenceEngine] Failed to initialize AIModelManager.");
+      return HIAI_ERROR;
+    }
   }
 
-  std::vector < hiai::AIModelDescription > model_desc_vec;
+  std::vector<hiai::AIModelDescription> model_desc_vec;
   hiai::AIModelDescription model_description;
 
   for (int index = 0; index < config.items_size(); ++index) {
@@ -93,6 +102,12 @@ HIAI_StatusT GenderInferenceEngine::Init(
     } else if (item.name() == kBatchSizeItemName) {
       std::stringstream ss(item.value());
       ss >> batch_size_;
+      if (batch_size_ <= 0) {
+        HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                        "[GenderInferenceEngine] batch_size_ is [%d]",
+                        batch_size_);
+        return HIAI_ERROR;
+      }
     }
   }
 
@@ -116,12 +131,13 @@ HIAI_StatusT GenderInferenceEngine::SendResultData(
                         std::static_pointer_cast<void>(tran_data));
     if (hiai_ret == HIAI_QUEUE_FULL) {
       HIAI_ENGINE_LOG("[GenderInferenceEngine] queue full");
-      usleep (kWaitTime);
+      usleep(kWaitTime);
     }
   } while (hiai_ret == HIAI_QUEUE_FULL);
 
   if (hiai_ret != HIAI_OK) {
-    HIAI_ENGINE_LOG("[GenderInferenceEngine] send finished data failed!");
+    HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                    "[GenderInferenceEngine] send finished data failed!");
     return HIAI_ERROR;
   }
 
@@ -129,7 +145,7 @@ HIAI_StatusT GenderInferenceEngine::SendResultData(
 }
 
 void GenderInferenceEngine::BatchImageResize(
-    std::shared_ptr<BatchCroppedImageParaT>& batch_image_input,
+    const std::shared_ptr<BatchCroppedImageParaT>& batch_image_input,
     std::shared_ptr<BatchCroppedImageParaT>& batch_image_output) {
   batch_image_output->video_image_info = batch_image_input->video_image_info;
   // resize for each image
@@ -141,13 +157,14 @@ void GenderInferenceEngine::BatchImageResize(
     /**
      * when use dvpp_process only for resize function:
      *
-     * 1.DVPP limits crop_left and crop_right should be Odd number,
+     * 1.DVPP limits crop_right and crop_down should be Odd number,
      * if it is even number, subtract 1, otherwise Equal to origin width
      * or height.
      *
-     * 2.crop_up and crop_down should be set to zero.
+     * 2.crop_left and crop_up should be set to zero.
      */
-    dvpp_basic_vpc_para.input_image_type = INPUT_YUV420_SEMI_PLANNER_UV; // nv12
+    dvpp_basic_vpc_para.input_image_type = INPUT_YUV420_SEMI_PLANNER_UV;  // nv12
+    dvpp_basic_vpc_para.output_image_type = OUTPUT_YUV420SP_UV;  // nv12
     dvpp_basic_vpc_para.src_resolution.width = (int) iter->img.width;
     dvpp_basic_vpc_para.src_resolution.height = (int) iter->img.height;
     // DVPP limits crop_left should be even number, 0 means without crop
@@ -171,13 +188,19 @@ void GenderInferenceEngine::BatchImageResize(
                                             (int32_t) iter->img.size,
                                             &dvpp_out);
     if (ret != ascend::utils::kDvppOperationOk) {
-        HIAI_ENGINE_LOG(
-            "[GenderInferenceEngine] resize image failed with code %d !", ret);
-        continue;
+      HIAI_ENGINE_LOG(
+          HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+          "[GenderInferenceEngine] resize image failed with code %d !", ret);
+      continue;
     }
 
-    std::shared_ptr < ObjectImageParaT > obj_image = std::make_shared<
-        ObjectImageParaT>();
+    std::shared_ptr<ObjectImageParaT> obj_image;
+    MAKE_SHARED_NO_THROW(obj_image, ObjectImageParaT);
+    if (obj_image == nullptr) {
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "[GenderInferenceEngine]obj_image make_shared failed.");
+      continue;
+    }
     obj_image->object_info.object_id = iter->object_info.object_id;
     obj_image->object_info.score = iter->object_info.score;
     obj_image->img.width = kDestImageWidth;
@@ -206,8 +229,8 @@ bool GenderInferenceEngine::ConstructBatchBuffer(
           temp + j * image_size, image_size,
           image_handle->obj_imgs[batch_index + j].img.data.get(), image_size);
       if (err != EOK) {
-        HIAI_ENGINE_LOG(
-            "[GenderInferenceEngine] ERROR, copy image buffer failed");
+        HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                        "[GenderInferenceEngine] copy image buffer failed");
         is_successed = false;
         break;
       }
@@ -216,6 +239,7 @@ bool GenderInferenceEngine::ConstructBatchBuffer(
                              static_cast<char>(0), image_size);
       if (err != EOK) {
         HIAI_ENGINE_LOG(
+            HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
             "[GenderInferenceEngine] batch padding for image data failed");
         is_successed = false;
         break;
@@ -232,52 +256,51 @@ bool GenderInferenceEngine::ConstructInferenceResult(
     const std::shared_ptr<BatchCroppedImageParaT>& image_handle,
     const std::shared_ptr<BatchFaceInfoT>& tran_data) {
   if (output_data_vec.size() == 0) {
-    HIAI_ENGINE_LOG("[GenderInferenceEngine] output_data_vec is null!");
+    HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                    "[GenderInferenceEngine] output_data_vec is null!");
     return false;
   }
 
   int image_number = image_handle->obj_imgs.size();
 
   for (int n = 0; n < output_data_vec.size(); ++n) {
-    std::shared_ptr < hiai::AINeuralNetworkBuffer > result_tensor =
-        std::static_pointer_cast < hiai::AINeuralNetworkBuffer
-            > (output_data_vec[n]);
+    std::shared_ptr<hiai::AINeuralNetworkBuffer> result_tensor =
+        std::static_pointer_cast<hiai::AINeuralNetworkBuffer>(
+            output_data_vec[n]);
     //get confidence result
     int size = result_tensor->GetSize() / sizeof(float);
     float* result = (float*) result_tensor->GetBuffer();
+    int batch_inference_num = size / batch_size_;
 
     // analyze each batch result
     for (int batch_result_index = 0; batch_result_index < size;
-        batch_result_index += size / batch_size_) {
-      double result_tmp[8] = { 0 };
+        batch_result_index += batch_inference_num) {
+      double result_tmp[kClassSum] = { 0 };
       double soft_sum = 0;
-      float softmax_result[8] = { 0 };
+      float softmax_result = 0;
+
       //find max confidence for each image
-      for (int index = 0; index < size / batch_size_; index++) {
+      int max_confidence_index = 0;
+      for (int index = 0; index < batch_inference_num; index++) {
+        if (*(result + batch_result_index + index)
+            > *(result + batch_result_index + max_confidence_index)) {
+          max_confidence_index = index;
+        }
         result_tmp[index] = exp(*(result + batch_result_index + index));
         soft_sum = soft_sum + result_tmp[index];
       }
-      for (int index = 0; index < size / batch_size_; index++) {
-        softmax_result[index] = (float) (result_tmp[index] / soft_sum);
-      }
-
-      int max_confidence_index = 0;
-      for (int index = 1; index < size / batch_size_; index++) {
-        if (softmax_result[index] > softmax_result[max_confidence_index]) {
-          max_confidence_index = index;
-        }
-      }
+      softmax_result = (float) (result_tmp[max_confidence_index] / soft_sum);
 
       // creat out struct for each batch
       FaceInfoT out;
-      if (batch_index + batch_result_index / (size / batch_size_)
+      if (batch_index + batch_result_index / batch_inference_num
           < image_number) {
         out.object_id = image_handle->obj_imgs[batch_index
-            + batch_result_index / (size / batch_size_)].object_info.object_id;
+            + batch_result_index / batch_inference_num].object_info.object_id;
         out.label = max_confidence_index;
         out.attribute_name = kGender;
         out.inference_result = kGenderClass[max_confidence_index];
-        out.confidence = softmax_result[max_confidence_index];
+        out.confidence = softmax_result;
         tran_data->face_infos.push_back(out);
       }
     }
@@ -299,39 +322,49 @@ HIAI_StatusT GenderInferenceEngine::BatchInferenceProcess(
   // the loop for each batch ,maybe image_number greater than batch_size_
   for (int i = 0; i < image_number; i += batch_size_) {
 
-    std::vector < std::shared_ptr<hiai::IAITensor> > input_data_vec;
-    std::vector < std::shared_ptr<hiai::IAITensor> > output_data_vec;
+    std::vector<std::shared_ptr<hiai::IAITensor> > input_data_vec;
+    std::vector<std::shared_ptr<hiai::IAITensor> > output_data_vec;
     //1.prepare input buffer for each batch
     if (tran_data == nullptr) {
-      tran_data = std::make_shared<BatchFaceInfoT>();
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "[GenderInferenceEngine] tran_data is nullptr.");
+      return HIAI_ERROR;
     }
+
     //  apply buffer for each batch
-    uint8_t* temp = new uint8_t[batch_buffer_size];
+    uint8_t* temp = new (nothrow) uint8_t[batch_buffer_size];
+    if (temp == nullptr) {
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "[GenderInferenceEngine] new batch_buffer_size failed!");
+      return HIAI_ERROR;
+    }
+
     // Origin image information is transmitted to next Engine directly
     tran_data->video_image_info = image_handle->video_image_info;
-    bool is_successed = true;
 
-    is_successed = ConstructBatchBuffer(i, image_handle, temp);
+    bool is_successed = ConstructBatchBuffer(i, image_handle, temp);
     if (!is_successed) {
       HIAI_ENGINE_LOG(
+          HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
           "[GenderInferenceEngine] batch input buffer construct failed!");
       delete[] temp;
       return HIAI_ERROR;
     }
 
-    std::shared_ptr < hiai::AINeuralNetworkBuffer > neural_buffer =
-        std::shared_ptr < hiai::AINeuralNetworkBuffer
-            > (new hiai::AINeuralNetworkBuffer());
+    std::shared_ptr<hiai::AINeuralNetworkBuffer> neural_buffer =
+        std::shared_ptr<hiai::AINeuralNetworkBuffer>(
+            new hiai::AINeuralNetworkBuffer());
     neural_buffer->SetBuffer((void*) (temp), batch_buffer_size);
-    std::shared_ptr < hiai::IAITensor > input_data = std::static_pointer_cast
-        < hiai::IAITensor > (neural_buffer);
+    std::shared_ptr<hiai::IAITensor> input_data = std::static_pointer_cast<
+        hiai::IAITensor>(neural_buffer);
     input_data_vec.push_back(input_data);
 
     // 2.Call Process, Predict
     ret = ai_model_manager_->CreateOutputTensor(input_data_vec,
                                                 output_data_vec);
     if (ret != hiai::SUCCESS) {
-      HIAI_ENGINE_LOG("[GenderInferenceEngine] CreateOutputTensor failed");
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "[GenderInferenceEngine] CreateOutputTensor failed");
       delete[] temp;
       return HIAI_ERROR;
     }
@@ -342,6 +375,7 @@ HIAI_StatusT GenderInferenceEngine::BatchInferenceProcess(
                                      output_data_vec, 0);
     if (ret != hiai::SUCCESS) {
       HIAI_ENGINE_LOG(
+          HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
           "[GenderInferenceEngine] ai_model_manager Process failed");
       delete[] temp;
       return HIAI_ERROR;
@@ -356,13 +390,15 @@ HIAI_StatusT GenderInferenceEngine::BatchInferenceProcess(
 
     if (!is_successed) {
       HIAI_ENGINE_LOG(
+          HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
           "[GenderInferenceEngine] batch copy output buffer failed!");
       return HIAI_ERROR;
     }
     //4. send the result
     hiai_ret = SendResultData(tran_data);
     if (hiai_ret != HIAI_OK) {
-      HIAI_ENGINE_LOG("[GenderInferenceEngine] SendData failed! error code: %d",
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "[GenderInferenceEngine] SendData failed! error code: %d",
                       hiai_ret);
     }
 
@@ -377,37 +413,46 @@ HIAI_StatusT GenderInferenceEngine::BatchInferenceProcess(
 HIAI_IMPL_ENGINE_PROCESS("gender_inference", GenderInferenceEngine,
     INPUT_SIZE) {
   HIAI_StatusT hiai_ret = HIAI_OK;
-  std::shared_ptr<BatchFaceInfoT> tran_data = std::make_shared<BatchFaceInfoT>();
-  std::shared_ptr<BatchCroppedImageParaT> image_input = std::make_shared<
-  BatchCroppedImageParaT>();
+  std::shared_ptr<BatchFaceInfoT> tran_data;
+  MAKE_SHARED_NO_THROW(tran_data, BatchFaceInfoT);
+  if (tran_data == nullptr) {
+    HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                    "[GenderInferenceEngine] tran_data make_shared failed.");
+    return HIAI_ERROR;
+  }
 
-  std::shared_ptr<BatchCroppedImageParaT> image_handle = std::make_shared<
-  BatchCroppedImageParaT>();
+  std::shared_ptr<BatchCroppedImageParaT> image_handle;
+  MAKE_SHARED_NO_THROW(image_handle, BatchCroppedImageParaT);
+  if (image_handle == nullptr) {
+    HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                    "[GenderInferenceEngine] image_handle make_shared failed.");
+    return HIAI_ERROR;
+  }
 
   if (arg0 == nullptr) {
-    HIAI_ENGINE_LOG("[GenderInferenceEngine] input data is null!");
+    HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                    "[GenderInferenceEngine] input data is null!");
     return HIAI_ERROR;
   }
+
   // this engine only need one queue, so the port should be set to zero.
-  input_que_.PushData(0, arg0);
-  if (!input_que_.PopAllData(image_input)) {
-    HIAI_ENGINE_LOG("[GenderInferenceEngine] fail to PopAllData");
-    return HIAI_ERROR;
-  }
+  std::shared_ptr<BatchCroppedImageParaT> image_input = static_pointer_cast<
+      BatchCroppedImageParaT>(arg0);
+
   if (image_input == nullptr) {
     HIAI_ENGINE_LOG("[GenderInferenceEngine] image_input is nullptr");
     return HIAI_ERROR;
   }
 
   // add is_finished for showing this data in dataset are all sended.
-  if (image_input->video_image_info.is_finished == true) {
+  if (image_input->video_image_info.is_finished) {
     tran_data->video_image_info = image_input->video_image_info;
     return SendResultData(tran_data);
   }
 
   // resize input image;
   BatchImageResize(image_input, image_handle);
-  if (image_handle->obj_imgs.empty() == true) {
+  if (image_handle->obj_imgs.empty()) {
     HIAI_ENGINE_LOG("[GenderInferenceEngine] image_input resize failed");
     return HIAI_ERROR;
   }
