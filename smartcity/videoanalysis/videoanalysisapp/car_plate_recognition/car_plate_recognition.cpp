@@ -45,6 +45,9 @@
 #include <hiaiengine/ai_types.h>
 #include "hiaiengine/ai_model_parser.h"
 
+using hiai::Engine;
+using namespace std;
+
 namespace {
 // car plate characters
 const string kCarPlateChars[65] = { "京", "沪", "津", "渝", "冀", "晋", "蒙", "辽", "吉",
@@ -65,6 +68,9 @@ const int kDestImageHeight = 72;
 // car plate number length
 const int kCarPlateLength = 7;
 
+// standard: 1024 * 1024 * 128 = 134217728 (128M)
+const int kMaxNewMemory = 134217728;
+
 // the name of model_path in the config file
 const string kModelPathItemName = "model_path";
 
@@ -81,8 +87,8 @@ HIAI_REGISTER_DATA_TYPE("CarInfoT", CarInfoT);
 HIAI_REGISTER_DATA_TYPE("BatchCroppedImageParaT", BatchCroppedImageParaT);
 
 HIAI_StatusT CarPlateRecognition::Init(
-    const hiai::AIConfig& config,
-    const std::vector<hiai::AIModelDescription>& model_desc) {
+    const hiai::AIConfig &config,
+    const std::vector<hiai::AIModelDescription> &model_desc) {
   HIAI_ENGINE_LOG("[CarPlateRecognition] start init!");
   hiai::AIStatus ret = hiai::SUCCESS;
 
@@ -95,7 +101,7 @@ HIAI_StatusT CarPlateRecognition::Init(
 
   // loop for each item
   for (int index = 0; index < config.items_size(); ++index) {
-    const ::hiai::AIConfigItem& item = config.items(index);
+    const ::hiai::AIConfigItem &item = config.items(index);
     if (item.name() == kModelPathItemName) { // get model path
       const char* model_path = item.value().data();
       model_description.set_path(model_path);
@@ -127,7 +133,7 @@ HIAI_StatusT CarPlateRecognition::Init(
 }
 
 HIAI_StatusT CarPlateRecognition::SendResultData(
-    const std::shared_ptr<BatchCarInfoT>& tran_data) {
+    const std::shared_ptr<BatchCarInfoT> &tran_data) {
   HIAI_StatusT hiai_ret = HIAI_OK;
 
   do {
@@ -150,8 +156,8 @@ HIAI_StatusT CarPlateRecognition::SendResultData(
 }
 
 void CarPlateRecognition::BatchImageResize(
-    std::shared_ptr<BatchCroppedImageParaT>& batch_image_input,
-    std::shared_ptr<BatchCroppedImageParaT>& batch_image_output) {
+    std::shared_ptr<BatchCroppedImageParaT> &batch_image_input,
+    std::shared_ptr<BatchCroppedImageParaT> &batch_image_output) {
   batch_image_output->video_image_info = batch_image_input->video_image_info;
 
   // resize for each image
@@ -217,7 +223,7 @@ void CarPlateRecognition::BatchImageResize(
 
 bool CarPlateRecognition::ConstructBatchBuffer(
     int batch_index,
-    const std::shared_ptr<BatchCroppedImageParaT>& image_handle,
+    const std::shared_ptr<BatchCroppedImageParaT> &image_handle,
     uint8_t* temp) {
   int image_number = image_handle->obj_imgs.size();
   int image_size = image_handle->obj_imgs[0].img.size * sizeof(uint8_t);
@@ -251,8 +257,8 @@ bool CarPlateRecognition::ConstructBatchBuffer(
 bool CarPlateRecognition::ConstructInferenceResult(
     const std::vector<std::shared_ptr<hiai::IAITensor>> &output_data_vec,
     int batch_index,
-    const std::shared_ptr<BatchCroppedImageParaT>& image_handle,
-    const std::shared_ptr<BatchCarInfoT>& tran_data) {
+    const std::shared_ptr<BatchCroppedImageParaT> &image_handle,
+    const std::shared_ptr<BatchCarInfoT> &tran_data) {
 
   if (output_data_vec.empty()) { // check the output data vector is empty
     HIAI_ENGINE_LOG("[CarPlateRecognition] output_data_vec is empty!");
@@ -311,8 +317,8 @@ bool CarPlateRecognition::ConstructInferenceResult(
 }
 
 HIAI_StatusT CarPlateRecognition::BatchInferenceProcess(
-    const std::shared_ptr<BatchCroppedImageParaT>& image_handle,
-    std::shared_ptr<BatchCarInfoT> tran_data) {
+    const std::shared_ptr<BatchCroppedImageParaT> &image_handle,
+    std::shared_ptr<BatchCarInfoT> &tran_data) {
   HIAI_ENGINE_LOG("[CarPlateRecognition] start inference process!");
 
   hiai::AIStatus ret = hiai::SUCCESS;
@@ -320,6 +326,15 @@ HIAI_StatusT CarPlateRecognition::BatchInferenceProcess(
   int image_number = image_handle->obj_imgs.size();
   int image_size = image_handle->obj_imgs[0].img.size * sizeof(uint8_t);
   int batch_buffer_size = image_size * batch_size_;
+
+  // check data size is valid
+  if (batch_buffer_size <= 0 || batch_buffer_size > kMaxNewMemory) {
+    HIAI_ENGINE_LOG(
+        HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+        "the batch buffer size:%d is invalid! value range: 1~134217728",
+        batch_buffer_size);
+    return HIAI_ERROR;
+  }
 
   // the loop for each batch ,maybe image_number greater than batch_size_
   for (int i = 0; i < image_number; i += batch_size_) {
@@ -332,7 +347,13 @@ HIAI_StatusT CarPlateRecognition::BatchInferenceProcess(
     }
 
     //1.prepare input buffer for each batch
-    uint8_t* temp = new uint8_t[batch_buffer_size];
+    uint8_t* temp = new (nothrow) uint8_t[batch_buffer_size];
+    if (temp == nullptr) { // check new memory result
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "Fail to new memory for input buffer!");
+      return HIAI_ERROR;
+    }
+
     if (!ConstructBatchBuffer(i, image_handle, temp)) { // construct input data
       HIAI_ENGINE_LOG(
           HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
@@ -343,7 +364,13 @@ HIAI_StatusT CarPlateRecognition::BatchInferenceProcess(
 
     std::shared_ptr<hiai::AINeuralNetworkBuffer> neural_buffer =
         std::shared_ptr<hiai::AINeuralNetworkBuffer>(
-            new hiai::AINeuralNetworkBuffer());
+            new (nothrow) hiai::AINeuralNetworkBuffer());
+    if (neural_buffer.get() == nullptr) { // check new memory result
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "Fail to new memory when initialize neural buffer!");
+      return HIAI_ERROR;
+    }
+
     neural_buffer->SetBuffer((void*) (temp), batch_buffer_size);
     std::shared_ptr<hiai::IAITensor> input_data = std::static_pointer_cast<
         hiai::IAITensor>(neural_buffer);
@@ -384,7 +411,7 @@ HIAI_StatusT CarPlateRecognition::BatchInferenceProcess(
     //4. send ai model inference result to next engine
     hiai_ret = SendResultData(tran_data);
     if (hiai_ret != HIAI_OK) { // check send data result
-      HIAI_ENGINE_LOG("[CarPlateRecognition] send data failed! error code: %d",
+      HIAI_ENGINE_LOG("[CarPlateRecognition] send data failed! error code:%d",
                       hiai_ret);
     }
 
@@ -411,7 +438,7 @@ HIAI_IMPL_ENGINE_PROCESS("car_plate_recognition", CarPlateRecognition,
   tran_data->video_image_info = image_input->video_image_info;
 
   // the input data is finished
-  if (image_input->video_image_info.is_finished == true) {
+  if (image_input->video_image_info.is_finished) {
     return SendResultData(tran_data);
   }
 
@@ -426,7 +453,7 @@ HIAI_IMPL_ENGINE_PROCESS("car_plate_recognition", CarPlateRecognition,
 
   // resize input image;
   BatchImageResize(image_input, image_handle);
-  if (image_handle->obj_imgs.empty() == true) { // check result vector is empty
+  if (image_handle->obj_imgs.empty()) { // check result vector is empty
     HIAI_ENGINE_LOG("[CarPlateRecognition] image_input resize failed");
     return HIAI_ERROR;
   }

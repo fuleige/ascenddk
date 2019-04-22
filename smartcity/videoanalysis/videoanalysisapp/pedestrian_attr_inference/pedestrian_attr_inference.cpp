@@ -46,6 +46,9 @@
 #include <hiaiengine/ai_types.h>
 #include "hiaiengine/ai_model_parser.h"
 
+using hiai::Engine;
+using namespace std;
+
 namespace {
 const int kDestImageWidth = 226; // the image width for model
 
@@ -61,6 +64,9 @@ const float kAttrConfidenceThreshold = 0.5;
 const int kHairAttrOrder = 15; // short or long hair attributes order
 
 const int kGenderAttrOrder = 16; // gender attributes order
+
+// standard: 1024 * 1024 * 128 = 134217728 (128M)
+const int kMaxNewMemory = 134217728;
 
 const string kModelPathItemName = "model_path"; // model path string
 
@@ -173,13 +179,14 @@ void PedestrianAttrInference::BatchImageResize(
     /**
      * when use dvpp_process only for resize function:
      *
-     * 1.DVPP limits crop_left and crop_right should be Odd number,
+     * 1.DVPP limits crop_right and crop_down should be Odd number,
      * if it is even number, subtract 1, otherwise Equal to origin width
      * or height.
      *
-     * 2.crop_up and crop_down should be set to zero.
+     * 2.crop_left and crop_up should be set to zero.
      */
     dvpp_basic_vpc_para.input_image_type = INPUT_YUV420_SEMI_PLANNER_UV; // nv12
+    dvpp_basic_vpc_para.output_image_type = OUTPUT_YUV420SP_UV; // nv12
     dvpp_basic_vpc_para.src_resolution.width = (int) iter->img.width;
     dvpp_basic_vpc_para.src_resolution.height = (int) iter->img.height;
     dvpp_basic_vpc_para.dest_resolution.width = kDestImageWidth;
@@ -371,6 +378,15 @@ HIAI_StatusT PedestrianAttrInference::BatchInferenceProcess(
   int image_size = image_handle->obj_imgs[0].img.size * sizeof(uint8_t);
   int batch_buffer_size = image_size * batch_size_;
 
+  // check data size is valid
+  if (batch_buffer_size <= 0 || batch_buffer_size > kMaxNewMemory) {
+    HIAI_ENGINE_LOG(
+        HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+        "the batch buffer size:%d is invalid! value range: 1~134217728",
+        batch_buffer_size);
+    return HIAI_ERROR;
+  }
+
   // the loop for each batch ,maybe image_number greater than batch_size_
   for (int i = 0; i < image_number; i += batch_size_) {
     std::vector<std::shared_ptr<hiai::IAITensor>> input_data_vec;
@@ -382,7 +398,13 @@ HIAI_StatusT PedestrianAttrInference::BatchInferenceProcess(
     }
 
     // apply buffer for each batch
-    uint8_t* batch_buffer = new uint8_t[batch_buffer_size];
+    uint8_t* batch_buffer = new (nothrow) uint8_t[batch_buffer_size];
+    if (batch_buffer == nullptr) { // check new memory result
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "Fail to new memory for input buffer!");
+      return HIAI_ERROR;
+    }
+
     // origin image information is transmitted to next Engine directly
     tran_data->video_image_info = image_handle->video_image_info;
 
@@ -396,7 +418,13 @@ HIAI_StatusT PedestrianAttrInference::BatchInferenceProcess(
 
     std::shared_ptr<hiai::AINeuralNetworkBuffer> neural_buffer =
         std::shared_ptr<hiai::AINeuralNetworkBuffer>(
-            new hiai::AINeuralNetworkBuffer());
+            new (nothrow) hiai::AINeuralNetworkBuffer());
+    if (neural_buffer.get() == nullptr) { // check new memory result
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "Fail to new memory when initialize neural buffer!");
+      return HIAI_ERROR;
+    }
+
     neural_buffer->SetBuffer((void*) (batch_buffer), batch_buffer_size);
     std::shared_ptr<hiai::IAITensor> input_data = std::static_pointer_cast<
         hiai::IAITensor>(neural_buffer);
@@ -482,14 +510,14 @@ HIAI_IMPL_ENGINE_PROCESS("pedestrian_attr_inference",
   }
 
   // check current data is contains is_finished
-  if (image_input->video_image_info.is_finished == true) {
+  if (image_input->video_image_info.is_finished) {
     tran_data->video_image_info = image_input->video_image_info;
     return SendResultData(tran_data);
   }
 
   // resize input image
   BatchImageResize(image_input, image_handle);
-  if (image_handle->obj_imgs.empty() == true) { // check resize result
+  if (image_handle->obj_imgs.empty()) { // check resize result
     HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
         "Fail to resize input image!");
     return HIAI_ERROR;

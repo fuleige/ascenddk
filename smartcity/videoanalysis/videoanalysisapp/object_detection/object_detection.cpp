@@ -42,6 +42,7 @@ using ascend::utils::DvppProcess;
 using hiai::ImageData;
 using hiai::IMAGEFORMAT;
 using namespace std;
+using namespace ascend::videoanalysis;
 
 namespace {
 const uint32_t kInputPort = 0; // the input port number
@@ -72,6 +73,9 @@ const int kVpcHeightAlign = 16;
 
 // standard: 4096 * 4096 * 4 = 67108864 (64M)
 const int kAllowedMaxImageMemory = 67108864;
+
+// standard: 1024 * 1024 * 128 = 134217728 (128M)
+const int kMaxNewMemory = 134217728;
 
 const int kKeyFrameInterval = 5; // key fram interval
 
@@ -122,8 +126,8 @@ ObjectDetectionInferenceEngine::~ObjectDetectionInferenceEngine() {
 }
 
 HIAI_StatusT ObjectDetectionInferenceEngine::Init(
-    const hiai::AIConfig& config,
-    const vector<hiai::AIModelDescription>& model_desc) {
+    const hiai::AIConfig &config,
+    const vector<hiai::AIModelDescription> &model_desc) {
   HIAI_ENGINE_LOG(HIAI_DEBUG_INFO, "[ODInferenceEngine] start to initialize!");
 
   if (ai_model_manager_ == nullptr) { // check ai model manager is nullptr
@@ -135,7 +139,7 @@ HIAI_StatusT ObjectDetectionInferenceEngine::Init(
 
   // load model path.
   for (int index = 0; index < config.items_size(); ++index) {
-    const ::hiai::AIConfigItem& item = config.items(index);
+    const ::hiai::AIConfigItem &item = config.items(index);
     if (item.name() == kModelPath) { // current item is model path
       const char* model_path = item.value().data();
       model_description.set_path(model_path);
@@ -168,13 +172,27 @@ HIAI_StatusT ObjectDetectionInferenceEngine::Init(
   return HIAI_OK;
 }
 
-void CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
+void ascend::videoanalysis::CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
   if (frame == nullptr || hiai_data == nullptr) { // check input parameters
     HIAI_ENGINE_LOG(
         HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
         "The input data for function:CallVpcGetYuvImage is nullptr!");
     return;
   }
+
+  string channel_name = ((HiaiDataSpSon*) hiai_data)->channel_name_;
+  string channel_id = ((HiaiDataSpSon*) hiai_data)->channel_id_;
+  uint32_t frame_id = GetFrameId(channel_id);
+
+  // only send key frame to next engine, key frame id: 1,6,11,16...
+  if (!IsKeyFrame(frame_id)) {
+    return;
+  }
+
+  HIAI_ENGINE_LOG("Get key frame, frame id:%d, channel_id:%s, channel_name:%s,"
+                  " frame->realWidth:%d, frame->realHeight:%d",
+                  frame_id, channel_id.c_str(), channel_name.c_str(),
+                  frame->realWidth, frame->realHeight);
 
   IDVPPAPI* dvpp_api = nullptr;
   CreateDvppApi(dvpp_api);
@@ -186,10 +204,21 @@ void CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
     return;
   }
 
+  int aligned_output_width = ALIGN_UP(frame->width, kVpcWidthAlign);
+  int aligned_output_height = ALIGN_UP(frame->height, kVpcHeightAlign);
+
   // constructing input image configuration
-  shared_ptr<VpcUserImageConfigure> image_configure(new VpcUserImageConfigure);
-  image_configure->widthStride = frame->width;
-  image_configure->heightStride = frame->height;
+  shared_ptr<VpcUserImageConfigure> image_configure(
+      new (nothrow) VpcUserImageConfigure);
+  if (image_configure.get() == nullptr) { // check new memory result
+    HIAI_ENGINE_LOG(
+        HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+        "Fail to new memory when construct input image configuration!");
+    return;
+  }
+
+  image_configure->widthStride = aligned_output_width;
+  image_configure->heightStride = aligned_output_height;
 
   // check image format is nv12
   if (strcmp(frame->image_format, kImageFormatNv12.c_str()) == kCompareEqual) {
@@ -215,7 +244,15 @@ void CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
   image_configure->compressDataConfigure.chromaPayloadStride = frame
       ->stride_payload;
 
-  shared_ptr<VpcUserRoiConfigure> roi_configure(new VpcUserRoiConfigure);
+  shared_ptr<VpcUserRoiConfigure> roi_configure(
+      new (nothrow) VpcUserRoiConfigure);
+  if (roi_configure.get() == nullptr) { // check new memory result
+    HIAI_ENGINE_LOG(
+        HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+        "Fail to new memory when initialize vpc user roi configure!");
+    return;
+  }
+
   roi_configure->next = nullptr;
 
   // constructing input roi configuration
@@ -229,8 +266,6 @@ void CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
   input_configure->cropArea.downOffset =
       frame->height % 2 == 0 ? frame->height - 1 : frame->height;
 
-  int aligned_output_width = ALIGN_UP(frame->width, kVpcWidthAlign);
-  int aligned_output_height = ALIGN_UP(frame->height, kVpcHeightAlign);
   int vpc_output_size = aligned_output_width * aligned_output_height
       * DVPP_YUV420SP_SIZE_MOLECULE / DVPP_YUV420SP_SIZE_DENOMINATOR;
 
@@ -244,27 +279,21 @@ void CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
   }
 
   // construct vpc out data buffer
-  uint8_t *vpc_out_buffer = (uint8_t *) mmap(
+  uint8_t* vpc_out_buffer = (uint8_t *) mmap(
       0, ALIGN_UP(vpc_output_size, MAP_2M), PROT_READ | PROT_WRITE,
-      MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | API_MAP_VA32BIT, -1, 0);
-  if (vpc_out_buffer == MAP_FAILED) { // check new buffer result
-    HIAI_ENGINE_LOG("Failed to malloc huge table memory in dvpp(new vpc).");
-    vpc_out_buffer = (uint8_t *) mmap(
-        0, ALIGN_UP(vpc_output_size, MAP_2M), PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS | API_MAP_VA32BIT, -1, 0);
-    if (vpc_out_buffer == MAP_FAILED) {
-      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
-                      "Failed to malloc 4k memory.");
-      return;
-    }
+      MAP_PRIVATE | MAP_ANONYMOUS | API_MAP_VA32BIT, -1, 0);
+  if (vpc_out_buffer == MAP_FAILED) {
+    HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                    "Failed to malloc 4k memory for vpc!");
+    return;
   }
 
   // constructing output roi configuration
   VpcUserRoiOutputConfigure *output_configure = &roi_configure->outputConfigure;
   output_configure->addr = vpc_out_buffer;
   output_configure->bufferSize = vpc_output_size;
-  output_configure->widthStride = frame->width;
-  output_configure->heightStride = frame->height;
+  output_configure->widthStride = aligned_output_width;
+  output_configure->heightStride = aligned_output_height;
   output_configure->outputArea.leftOffset = 0; // 0 means without crop
   // dvpp limits rightOffset is odd
   output_configure->outputArea.rightOffset =
@@ -315,28 +344,6 @@ void CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
     return;
   }
 
-  // send key frame data to next engine
-  HandleKeyFrameData(output_image_buffer, vpc_output_size, hiai_data, frame);
-  return;
-}
-
-void HandleKeyFrameData(uint8_t* &image_data_buffer, uint32_t image_data_size,
-                        void* &hiai_data, FRAME* &frame) {
-  string channel_name = ((HiaiDataSpSon*) hiai_data)->channel_name_;
-  string channel_id = ((HiaiDataSpSon*) hiai_data)->channel_id_;
-  uint32_t frame_id = GetFrameId(channel_id);
-
-  // only send key frame to next engine, key frame id: 1,6,11,16...
-  if (!IsKeyFrame(frame_id)) {
-    delete[] image_data_buffer;
-    return;
-  }
-
-  HIAI_ENGINE_LOG("Get key frame, frame id:%d, channel_id:%s, channel_name:%s,"
-                  " frame->realWidth:%d, frame->realHeight:%d",
-                  frame_id, channel_id.c_str(), channel_name.c_str(),
-                  frame->realWidth, frame->realHeight);
-
   shared_ptr<VideoImageParaT> video_image_para = make_shared<VideoImageParaT>();
   video_image_para->video_image_info.channel_id = channel_id;
   video_image_para->video_image_info.channel_name = channel_name;
@@ -348,11 +355,12 @@ void HandleKeyFrameData(uint8_t* &image_data_buffer, uint32_t image_data_size,
   video_image_para->img.size = image_data_size;
   video_image_para->img.data.reset(image_data_buffer,
                                    default_delete<uint8_t[]>());
-
   AddImage2Queue(video_image_para);
+
+  return;
 }
 
-bool IsKeyFrame(uint32_t frame_id) {
+bool ascend::videoanalysis::IsKeyFrame(uint32_t frame_id) {
   // the 1, 6, 11, 16... frame is key frame
   if (frame_id % kKeyFrameInterval == 1) {
     return true;
@@ -361,7 +369,7 @@ bool IsKeyFrame(uint32_t frame_id) {
   return false;
 }
 
-uint32_t GetFrameId(const string &channel_id) {
+uint32_t ascend::videoanalysis::GetFrameId(const string &channel_id) {
   if (channel_id == kStrChannelId1) { // check input channel id is channel1
     frame_id_1++;
     return frame_id_1;
@@ -371,7 +379,8 @@ uint32_t GetFrameId(const string &channel_id) {
   }
 }
 
-void AddImage2Queue(const shared_ptr<VideoImageParaT>& video_image_para) {
+void ascend::videoanalysis::AddImage2Queue(
+    const shared_ptr<VideoImageParaT> &video_image_para) {
   bool add_image_success = false;
   int count = 0; // count retry number
 
@@ -398,7 +407,7 @@ void AddImage2Queue(const shared_ptr<VideoImageParaT>& video_image_para) {
 }
 
 HIAI_StatusT ObjectDetectionInferenceEngine::ImagePreProcess(
-    const ImageData<u_int8_t>& src_img, ImageData<u_int8_t>& resized_img) {
+    const ImageData<u_int8_t> &src_img, ImageData<u_int8_t> &resized_img) {
   if (src_img.format != IMAGEFORMAT::YUV420SP) {
     // input image must be yuv420sp nv12.
     HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
@@ -411,13 +420,14 @@ HIAI_StatusT ObjectDetectionInferenceEngine::ImagePreProcess(
   /**
    * when use dvpp_process only for resize function:
    *
-   * 1.DVPP limits crop_left and crop_right should be Odd number,
+   * 1.DVPP limits crop_right and crop_down should be Odd number,
    * if it is even number, subtract 1, otherwise Equal to origin width
    * or height.
    *
-   * 2.crop_up and crop_down should be set to zero.
+   * 2.crop_left and crop_up should be set to zero.
    */
   dvpp_basic_vpc_para.input_image_type = INPUT_YUV420_SEMI_PLANNER_UV; // nv12
+  dvpp_basic_vpc_para.output_image_type = OUTPUT_YUV420SP_UV; // nv12
   dvpp_basic_vpc_para.src_resolution.width = (int) src_img.width;
   dvpp_basic_vpc_para.src_resolution.height = (int) src_img.height;
   dvpp_basic_vpc_para.dest_resolution.width = kInputWidth;
@@ -454,13 +464,18 @@ HIAI_StatusT ObjectDetectionInferenceEngine::ImagePreProcess(
 }
 
 HIAI_StatusT ObjectDetectionInferenceEngine::PerformInference(
-    shared_ptr<DetectionEngineTransT>& detection_trans,
-    ImageData<u_int8_t>& input_img) {
+    shared_ptr<DetectionEngineTransT> &detection_trans,
+    ImageData<u_int8_t> &input_img) {
   // init neural buffer.
   shared_ptr<hiai::AINeuralNetworkBuffer> neural_buffer = shared_ptr<
       hiai::AINeuralNetworkBuffer>(
-      new hiai::AINeuralNetworkBuffer(),
+      new (nothrow) hiai::AINeuralNetworkBuffer(),
       default_delete<hiai::AINeuralNetworkBuffer>());
+  if (neural_buffer.get() == nullptr) { // check new memory result
+    HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                    "Fail to new memory when initialize neural buffer!");
+    return HIAI_ERROR;
+  }
 
   neural_buffer->SetBuffer((void*) input_img.data.get(), input_img.size);
 
@@ -478,8 +493,8 @@ HIAI_StatusT ObjectDetectionInferenceEngine::PerformInference(
                         "[ODInferenceEngine] output tensor created failed!");
     return HIAI_ERROR;
   }
-  hiai::AIContext ai_context;
 
+  hiai::AIContext ai_context;
   // neural network inference.
   ret = ai_model_manager_->Process(ai_context, input_tensors, output_tensors,
                                    0);
@@ -494,10 +509,26 @@ HIAI_StatusT ObjectDetectionInferenceEngine::PerformInference(
   for (uint32_t index = 0; index < output_tensors.size(); ++index) {
     shared_ptr<hiai::AINeuralNetworkBuffer> result_tensor = static_pointer_cast<
         hiai::AINeuralNetworkBuffer>(output_tensors[index]);
+
     OutputT out;
     out.size = result_tensor->GetSize();
-    out.data = std::shared_ptr<uint8_t>(new uint8_t[out.size],
+    if (out.size <= 0 || out.size > kMaxNewMemory) { // check data size is valid
+      HIAI_ENGINE_LOG(
+          HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+          "the inference output size:%d is invalid! value range: 1~134217728",
+          out.size);
+      return HIAI_ERROR;
+    }
+
+    out.data = std::shared_ptr<uint8_t>(new (nothrow) uint8_t[out.size],
                                         std::default_delete<uint8_t[]>());
+    if (out.data.get() == nullptr) { // check new memory result
+      HIAI_ENGINE_LOG(
+          HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+          "Fail to new memory when handle ai model inference output!");
+      return HIAI_ERROR;
+    }
+
     errno_t ret = memcpy_s(out.data.get(), out.size, result_tensor->GetBuffer(),
                            out.size);
     if (ret != EOK) {
@@ -518,7 +549,7 @@ HIAI_StatusT ObjectDetectionInferenceEngine::PerformInference(
 }
 
 HIAI_StatusT ObjectDetectionInferenceEngine::SendDetectionResult(
-    shared_ptr<DetectionEngineTransT>& detection_trans, bool inference_success,
+    shared_ptr<DetectionEngineTransT> &detection_trans, bool inference_success,
     string err_msg) {
   if (!inference_success) {
     // inference error.
@@ -553,7 +584,7 @@ int ObjectDetectionInferenceEngine::GetIntChannelId(const string channel_id) {
 }
 
 bool ObjectDetectionInferenceEngine::ConvertVideoFrameToHfbc(
-    const shared_ptr<VideoImageParaT>& video_image) {
+    const shared_ptr<VideoImageParaT> &video_image) {
   IDVPPAPI* dvpp_api = nullptr;
   if (video_image->video_image_info.channel_id == kStrChannelId1) {
     if (dvpp_api_channel1_ == nullptr) { // chech dvpp api is nullptr
@@ -562,7 +593,7 @@ bool ObjectDetectionInferenceEngine::ConvertVideoFrameToHfbc(
           != kHandleSuccessful) {
         HIAI_ENGINE_LOG(
             HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
-            "[ODInferenceEngine] fail to create dvpp vdec api for channel1!");
+            "[ODInferenceEngine] fail to create vdec api for channel1!");
         return false;
       }
     }
@@ -574,7 +605,7 @@ bool ObjectDetectionInferenceEngine::ConvertVideoFrameToHfbc(
           != kHandleSuccessful) {
         HIAI_ENGINE_LOG(
             HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
-            "[ODInferenceEngine] fail to create dvpp vdec api for channel2!");
+            "[ODInferenceEngine] fail to create vdec api for channel2!");
         return false;
       }
     }
@@ -669,7 +700,7 @@ void ObjectDetectionInferenceEngine::ObjectDetectInference() {
 }
 
 HIAI_StatusT ObjectDetectionInferenceEngine::HandleFinishedData(
-    const shared_ptr<VideoImageParaT>& video_image) {
+    const shared_ptr<VideoImageParaT> &video_image) {
   // the input is finished
   HIAI_ENGINE_LOG(HIAI_DEBUG_INFO,
                   "[ODInferenceEngine] get is_finished frame!");
