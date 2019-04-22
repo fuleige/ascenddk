@@ -69,9 +69,11 @@ function startViewVideo(){
             // $('#load_media').show();
             var src = "data:image/jpeg;base64," + data['image'];
             // $('#load_media').attr('src', src);
+            if(data.hasOwnProperty("rectangle_list")){
+                rectangles = data['rectangle_list']
+            }
             if (data['type'] == 'video'){
                 $('#fpswapper').show();
-                rectangles = data['rectangle_list']
             }
             var wantedWidth = 1024
             var img = new Image()

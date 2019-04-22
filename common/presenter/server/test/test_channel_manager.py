@@ -166,7 +166,7 @@ class TestChannelManager(unittest.TestCase):
         self.assertEqual(ret, None)
 
         #test
-        self.manager.save_channel_image(channel_name, image_data)
+        self.manager.save_channel_image(channel_name, image_data, None)
 
         ret = self.manager.get_channel_image(channel_name)
         self.assertNotEqual(ret, None)

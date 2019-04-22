@@ -64,6 +64,7 @@ class Channel():
     def __init__(self, channel_name):
         self.channel_name = channel_name
         self.image = None
+        self.rectangle_list = None
 
 class ChannelManager():
     """manage all the api about channel
@@ -239,7 +240,7 @@ class ChannelManager():
                     return True
             return False
 
-    def save_channel_image(self, channel_name, image_data):
+    def save_channel_image(self, channel_name, image_data, rectangle_list):
         """
         when a channel bounding to image type,
         server will permanent hold an image for it.
@@ -249,6 +250,7 @@ class ChannelManager():
             for i in range(len(self.channel_list)):
                 if self.channel_list[i].channel_name == channel_name:
                     self.channel_list[i].image = image_data
+                    self.channel_list[i].rectangle_list = rectangle_list
                     break
 
     def get_channel_image(self, channel_name):
@@ -264,6 +266,17 @@ class ChannelManager():
 
             # channel not exist
             return None
+
+    def get_channel_image_with_rectangle(self, channel_name):
+        """
+        A new method for display server,
+        return the image and rectangle list
+        """
+        with self.channel_lock:
+            for i in range(len(self.channel_list)):
+                if self.channel_list[i].channel_name == channel_name:
+                    return (self.channel_list[i].image, self.channel_list[i].rectangle_list)
+            return (None, None)
 
     def clean_channel_image(self, channel_name):
         """

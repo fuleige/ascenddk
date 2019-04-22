@@ -135,10 +135,10 @@ class ChannelHandler():
         """save image receive from socket"""
         self.width = width
         self.height = height
+        self.rectangle_list = rectangle_list
 
         # compute fps if type is video
         if self.media_type == "video":
-            self.rectangle_list = rectangle_list
             while self.img_data:
                 time.sleep(0.01)
 
@@ -156,7 +156,7 @@ class ChannelHandler():
         else:
             self.img_data = data
             self.channel_manager.save_channel_image(self.channel_name,
-                                                    self.img_data)
+                                                    self.img_data, self.rectangle_list)
 
         self.heartbeat = time.time()
 
