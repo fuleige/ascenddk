@@ -352,8 +352,8 @@ void ascend::videoanalysis::CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
   video_image_para->img.width = frame->realWidth;
   video_image_para->img.height = frame->realHeight;
   video_image_para->img.format = IMAGEFORMAT::YUV420SP;
-  video_image_para->img.size = image_data_size;
-  video_image_para->img.data.reset(image_data_buffer,
+  video_image_para->img.size = vpc_output_size;
+  video_image_para->img.data.reset(output_image_buffer,
                                    default_delete<uint8_t[]>());
   AddImage2Queue(video_image_para);
 
