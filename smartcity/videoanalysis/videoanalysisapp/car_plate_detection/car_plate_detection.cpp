@@ -76,6 +76,9 @@ const float kTopLeftCoeff = 0.95; // the coeff used for top left
 
 const float kLowerRightCoeff = 1.01; // the coeff used for lower right
 
+// standard: 1024 * 1024 * 128 = 134217728 (128M)
+const int kMaxNewMemory = 134217728;
+
 // valid bbox coordinate values
 const float kLowerCoord = 0.0f;
 const float kUpperCoord = 1.0f;
@@ -96,8 +99,8 @@ HIAI_REGISTER_DATA_TYPE("VideoImageInfoT", VideoImageInfoT);
 HIAI_REGISTER_DATA_TYPE("ObjectImageParaT", ObjectImageParaT);
 
 HIAI_StatusT CarPlateDetection::Init(
-    const hiai::AIConfig& config,
-    const vector<hiai::AIModelDescription>& model_desc) {
+    const hiai::AIConfig &config,
+    const vector<hiai::AIModelDescription> &model_desc) {
   HIAI_ENGINE_LOG("[CarPlateDetection] start to initialize!");
   hiai::AIStatus ret = hiai::SUCCESS;
 
@@ -110,7 +113,7 @@ HIAI_StatusT CarPlateDetection::Init(
 
   // loop for each item in config file
   for (int index = 0; index < config.items_size(); ++index) {
-    const ::hiai::AIConfigItem& item = config.items(index);
+    const ::hiai::AIConfigItem &item = config.items(index);
     if (item.name() == kModelPath) { // check item is model path
       const char* model_path = item.value().data();
       model_description.set_path(model_path);
@@ -131,8 +134,8 @@ HIAI_StatusT CarPlateDetection::Init(
 }
 
 void CarPlateDetection::BatchImageResize(
-    shared_ptr<BatchCroppedImageParaT>& image_input,
-    shared_ptr<BatchCroppedImageParaT>& image_output) {
+    shared_ptr<BatchCroppedImageParaT> &image_input,
+    shared_ptr<BatchCroppedImageParaT> &image_output) {
   image_output->video_image_info = image_input->video_image_info;
 
   // resize for each image
@@ -176,7 +179,8 @@ void CarPlateDetection::BatchImageResize(
     if (ret != ascend::utils::kDvppOperationOk) { // check call vpc result
       HIAI_ENGINE_LOG(
           HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
-          "[CarColorInferenceEngine] resize image failed with error code:%d", ret);
+          "[CarColorInferenceEngine] resize image failed with error code:%d",
+          ret);
       continue;
     }
 
@@ -196,8 +200,8 @@ void CarPlateDetection::BatchImageResize(
   }
 }
 
-bool CarPlateDetection::CheckBBoxData(const OutputT& out_bbox,
-                                      const OutputT& out_num) {
+bool CarPlateDetection::CheckBBoxData(const OutputT &out_bbox,
+                                      const OutputT &out_num) {
   // check out bbox is valid
   if (out_bbox.data == nullptr || out_bbox.data.get() == nullptr
       || out_num.data == nullptr || out_num.data.get() == nullptr) {
@@ -224,8 +228,13 @@ HIAI_StatusT CarPlateDetection::PerformInference(
     // init neural buffer.
     shared_ptr<hiai::AINeuralNetworkBuffer> neural_buffer = shared_ptr<
         hiai::AINeuralNetworkBuffer>(
-        new hiai::AINeuralNetworkBuffer(),
+        new (nothrow) hiai::AINeuralNetworkBuffer(),
         default_delete<hiai::AINeuralNetworkBuffer>());
+    if (neural_buffer.get() == nullptr) { // check new memory result
+      HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+                      "Fail to new memory when initialize neural buffer!");
+      return HIAI_ERROR;
+    }
 
     ImageData<u_int8_t> input_img = iter->img;
     neural_buffer->SetBuffer((void*) input_img.data.get(), input_img.size);
@@ -260,10 +269,27 @@ HIAI_StatusT CarPlateDetection::PerformInference(
       shared_ptr<hiai::AINeuralNetworkBuffer> result_tensor =
           static_pointer_cast<hiai::AINeuralNetworkBuffer>(
               output_tensors[index]);
+
       OutputT out;
       out.size = result_tensor->GetSize();
-      out.data = std::shared_ptr<uint8_t>(new uint8_t[out.size],
+      // check data size is valid
+      if (out.size <= 0 || out.size > kMaxNewMemory) {
+        HIAI_ENGINE_LOG(
+            HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+            "the inference output size:%d is invalid! value range: 1~134217728",
+            out.size);
+        return HIAI_ERROR;
+      }
+
+      out.data = std::shared_ptr<uint8_t>(new (nothrow) uint8_t[out.size],
                                           std::default_delete<uint8_t[]>());
+      if (out.data.get() == nullptr) { // check new memory result
+        HIAI_ENGINE_LOG(
+            HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
+            "Fail to new memory when handle ai model inference output!");
+        return HIAI_ERROR;
+      }
+
       errno_t ret = memcpy_s(out.data.get(), out.size,
                              result_tensor->GetBuffer(), out.size);
       if (ret != EOK) { // check memory copy result
@@ -295,7 +321,7 @@ HIAI_StatusT CarPlateDetection::PerformInference(
     float* bbox_buffer = reinterpret_cast<float*>(out_bbox.data.get());
     float bbox_number = *reinterpret_cast<float*>(out_num.data.get());
     int32_t bbox_buffer_size = bbox_number * kSizePerResultset;
-    HIAI_ENGINE_LOG("[CarPlateDetection] the number of bbox: %d", bbox_number);
+    HIAI_ENGINE_LOG("[CarPlateDetection] the number of bbox:%d", bbox_number);
 
     float* ptr = bbox_buffer;
 
@@ -326,7 +352,7 @@ HIAI_StatusT CarPlateDetection::PerformInference(
 
       // check cropped image size is valid
       if (rb_x - lt_x < kMinCropPixel || rb_y - lt_x < kMinCropPixel) {
-        HIAI_ENGINE_LOG(            
+        HIAI_ENGINE_LOG(
             "[CarPlateDetection] the car plate image is too small!");
         continue;
       }

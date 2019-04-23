@@ -48,11 +48,12 @@
 #define INPUT_SIZE 2
 #define OUTPUT_SIZE 1
 
+// BoundingBox used for detect car plate
 struct BoundingBox {
-  uint32_t lt_x;
-  uint32_t lt_y;
-  uint32_t rb_x;
-  uint32_t rb_y;
+  uint32_t lt_x; // left top x-coordinate
+  uint32_t lt_y; // left top y-coordinate
+  uint32_t rb_x; // right bottom x-coordinate
+  uint32_t rb_y; // right bottom y-coordinate
 };
 
 class CarPlateDetection : public hiai::Engine {
@@ -61,8 +62,8 @@ class CarPlateDetection : public hiai::Engine {
    * @brief Engine initialize method
    * @return HIAI_StatusT
    */
-  HIAI_StatusT Init(const hiai::AIConfig& config,
-                    const std::vector<hiai::AIModelDescription>& model_desc);
+  HIAI_StatusT Init(const hiai::AIConfig &config,
+                    const std::vector<hiai::AIModelDescription> &model_desc);
 
   /**
    * @ingroup hiaiengine
@@ -80,8 +81,8 @@ HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
    * @param [out] batch_image_output: batch image for processing
    */
   void BatchImageResize(
-      std::shared_ptr<BatchCroppedImageParaT>& batch_image_input,
-      std::shared_ptr<BatchCroppedImageParaT>& batch_image_output);
+      std::shared_ptr<BatchCroppedImageParaT> &batch_image_input,
+      std::shared_ptr<BatchCroppedImageParaT> &batch_image_output);
 
   /**
    * @brief : object detection inference
@@ -107,9 +108,9 @@ HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
    * @param [in] bbox: bounding box coordinate
    * @return HIAI_StatusT
    */
-  HIAI_StatusT CropObjectFromImage(const hiai::ImageData<u_int8_t>& src_img,
-                                   hiai::ImageData<u_int8_t>& target_img,
-                                   const BoundingBox& bbox);
+  HIAI_StatusT CropObjectFromImage(const hiai::ImageData<u_int8_t> &src_img,
+                                   hiai::ImageData<u_int8_t> &target_img,
+                                   const BoundingBox &bbox);
 
   /**
    * @brief : send inference results to next engine
@@ -125,7 +126,7 @@ HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
    * @param [out] out_num: the bbox out number
    * @return true:BBox data valid, false:BBox data invalid
    */
-  bool CheckBBoxData(const OutputT& out_bbox, const OutputT& out_num);
+  bool CheckBBoxData(const OutputT &out_bbox, const OutputT &out_num);
 
   // shared ptr to load ai model
   std::shared_ptr<hiai::AIModelManager> ai_model_manager_;
