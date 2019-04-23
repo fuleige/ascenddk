@@ -180,15 +180,14 @@ void ascend::videoanalysis::CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
     return;
   }
 
-  string channel_name = ((HiaiDataSpSon*) hiai_data)->channel_name_;
   string channel_id = ((HiaiDataSpSon*) hiai_data)->channel_id_;
   uint32_t frame_id = GetFrameId(channel_id);
-
   // only send key frame to next engine, key frame id: 1,6,11,16...
   if (!IsKeyFrame(frame_id)) {
     return;
   }
 
+  string channel_name = ((HiaiDataSpSon*) hiai_data)->channel_name_;
   HIAI_ENGINE_LOG("Get key frame, frame id:%d, channel_id:%s, channel_name:%s,"
                   " frame->realWidth:%d, frame->realHeight:%d",
                   frame_id, channel_id.c_str(), channel_name.c_str(),
