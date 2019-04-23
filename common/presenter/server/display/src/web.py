@@ -255,7 +255,6 @@ class WebApp:
 
         if handler is not None:
             media_type = handler.get_media_type()
-            print("Add by lw for test, media type is %d" %media_type)
 
             # if type is image then get image data
             if media_type == "image":
