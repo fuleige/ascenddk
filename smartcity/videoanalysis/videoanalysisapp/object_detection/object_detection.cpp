@@ -281,7 +281,7 @@ void ascend::videoanalysis::CallVpcGetYuvImage(FRAME* frame, void* hiai_data) {
   uint8_t* vpc_out_buffer = (uint8_t *) mmap(
       0, ALIGN_UP(vpc_output_size, MAP_2M), PROT_READ | PROT_WRITE,
       MAP_PRIVATE | MAP_ANONYMOUS | API_MAP_VA32BIT, -1, 0);
-  if (vpc_out_buffer == MAP_FAILED) {
+  if (vpc_out_buffer == MAP_FAILED) { // check mmap buffer result
     HIAI_ENGINE_LOG(HIAI_ENGINE_RUN_ARGS_NOT_RIGHT,
                     "Failed to malloc 4k memory for vpc!");
     return;
