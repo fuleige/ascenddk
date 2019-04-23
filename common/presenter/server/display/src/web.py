@@ -240,11 +240,12 @@ class WebApp:
         if self.is_channel_exists(channel_name) is False:
             return {'type': 'unkown', 'image':'', 'fps':0, 'status':'error'}
 
-        image_data = self.channel_mgr.get_channel_image(channel_name)
+        image_data, rectangle_list = self.channel_mgr.get_channel_image_with_rectangle(channel_name)
+
         # only for image type.
         if image_data is not None:
             image_data = base64.b64encode(image_data).decode('utf-8')
-            return {'type': 'image', 'image':image_data, 'fps':0, 'status':'ok'}
+            return {'type': 'image', 'image':image_data, 'fps':0, 'status':'ok', 'rectangle_list':rectangle_list}
 
 
         fps = 0    # fps for video
@@ -254,6 +255,7 @@ class WebApp:
 
         if handler is not None:
             media_type = handler.get_media_type()
+            print("Add by lw for test, media type is %d" %media_type)
 
             # if type is image then get image data
             if media_type == "image":

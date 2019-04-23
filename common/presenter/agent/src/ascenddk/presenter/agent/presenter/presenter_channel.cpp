@@ -144,6 +144,23 @@ PresenterErrorCode PresentImage(Channel *channel, const ImageFrame &image) {
   return PresenterMessageHelper::CheckPresentImageResponse(*recv_message);
 }
 
+PresenterErrorCode SendMessage(
+        Channel *channel, const google::protobuf::Message& message) {
+    if (channel == nullptr) {
+        AGENT_LOG_ERROR("channel is NULL");
+        return PresenterErrorCode::kInvalidParam;
+    }
+
+    unique_ptr<google::protobuf::Message> resp;
+    PresenterErrorCode error_code = channel->SendMessage(message, resp);
+    if (error_code != PresenterErrorCode::kNone) {
+        AGENT_LOG_ERROR("Failed to present image, error = %d", error_code);
+        return error_code;
+    }
+
+    return PresenterMessageHelper::CheckPresentImageResponse(*resp);
+}
+
 }
 }
 

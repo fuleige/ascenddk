@@ -60,6 +60,15 @@ PresenterErrorCode OpenChannel(Channel *&channel,
  */
 PresenterErrorCode PresentImage(Channel *channel, const ImageFrame &image);
 
+/**
+ * @brief Send the image message to server for display through the given channel
+ * @param [in] channel        the channel to send the image with
+ * @param [in] message          a protobuf message
+ * @return PresenterErrorCode
+ */
+PresenterErrorCode SendMessage(Channel *channel,
+                               const google::protobuf::Message& message);
+
 } /* namespace presenter */
 } /* namespace ascend */
 
