@@ -98,7 +98,7 @@ const std::string kAppName = "app_name";
 const std::string kAppType = "video_analysis";
 
 class VideoAnalysisPost : public hiai::Engine {
-public:
+ public:
   /**
    * @brief   constructor
    */
@@ -107,13 +107,13 @@ public:
         app_config_(nullptr),
         agent_channel_(nullptr),
         image_ret_(kOperationOk),
-        car_type_ret_(kOperationOk),
-        car_color_ret_(kOperationOk),
-        pedestrian_ret_(kOperationOk),
-        face_image_ret_(kOperationOk),
-        age_ret_(kOperationOk),
-        gender_ret_(kOperationOk),
-        car_plate_ret_(kOperationOk) {
+        car_type_ret_(kExitApp),
+        car_color_ret_(kExitApp),
+        pedestrian_ret_(kExitApp),
+        face_image_ret_(kExitApp),
+        age_ret_(kExitApp),
+        gender_ret_(kExitApp),
+        car_plate_ret_(kExitApp) {
   }
 
   /**
@@ -190,9 +190,9 @@ public:
    * @brief  reload Engine Process
    * @param [in]  define the number of input and output
    */
-  HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
+HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
 
-private:
+ private:
   // Private implementation a member variable,
   // which is used to cache the input queue
   hiai::MultiTypeQueue input_que_;
@@ -223,7 +223,7 @@ private:
 
   // ret of SendFaceInfo function when infomation about gender
   OperationCode gender_ret_;
-  
+
   // ret of SendCarInfo function when infomation about car plate
   OperationCode car_plate_ret_;
 };

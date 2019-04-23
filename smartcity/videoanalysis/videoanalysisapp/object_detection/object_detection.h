@@ -50,6 +50,8 @@
 #define INPUT_SIZE 2
 #define OUTPUT_SIZE 1
 
+namespace ascend {
+namespace videoanalysis {
 // yuv420sp image frame info
 struct YuvImageFrameInfo {
   std::string channel_name;
@@ -71,16 +73,6 @@ bool IsKeyFrame(uint32_t frame_id);
 uint32_t GetFrameId(const std::string &channel_id);
 
 /**
- * @brief send key frame data to next engine
- * @param [in] image_data_buffer: yuv image data buffer
- * @param [in] image_data_size: yuv image data size
- * @param [in] hiai_data: used for transmit channel id ,channel name, frame id
- * @param [in] frame: image frame data
- */
-void HandleKeyFrameData(uint8_t* &image_data_buffer, uint32_t image_data_size,
-                        void* &hiai_data, FRAME* &frame);
-
-/**
  * @brief call vpc to get yuv42sp image
  * @param [in] frame: image frame data
  * @param [in] hiai_data: used for transmit channel and frame info
@@ -93,6 +85,8 @@ void CallVpcGetYuvImage(FRAME* frame, void* hiai_data);
  * @param [out] current_queue: the queue used for current channel
  */
 void AddImage2Queue(const shared_ptr<VideoImageParaT> &video_image_para);
+}
+}
 
 class ObjectDetectionInferenceEngine : public hiai::Engine {
  public:
@@ -110,8 +104,8 @@ class ObjectDetectionInferenceEngine : public hiai::Engine {
    * @brief Engine init method.
    * @return HIAI_StatusT
    */
-  HIAI_StatusT Init(const hiai::AIConfig& config,
-                    const std::vector<hiai::AIModelDescription>& model_desc);
+  HIAI_StatusT Init(const hiai::AIConfig &config,
+                    const std::vector<hiai::AIModelDescription> &model_desc);
 
   /**
    * @ingroup hiaiengine
@@ -120,7 +114,6 @@ class ObjectDetectionInferenceEngine : public hiai::Engine {
    * @return HIAI_StatusT
    */
 HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
-  ;
 
  private:
   /**
@@ -129,8 +122,8 @@ HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
    * @param [out] resized_img: resized image data.
    * @return HIAI_StatusT
    */
-  HIAI_StatusT ImagePreProcess(const hiai::ImageData<u_int8_t>& src_img,
-                               hiai::ImageData<u_int8_t>& resized_img);
+  HIAI_StatusT ImagePreProcess(const hiai::ImageData<u_int8_t> &src_img,
+                               hiai::ImageData<u_int8_t> &resized_img);
 
   /**
    * @brief : object detection function.
@@ -139,8 +132,8 @@ HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
    * @return HIAI_StatusT
    */
   HIAI_StatusT PerformInference(
-      std::shared_ptr<DetectionEngineTransT>& detection_trans,
-      hiai::ImageData<u_int8_t>& input_img);
+      std::shared_ptr<DetectionEngineTransT> &detection_trans,
+      hiai::ImageData<u_int8_t> &input_img);
 
   /**
    * @brief : send inference results to next engine.
@@ -150,7 +143,7 @@ HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
    * @return HIAI_StatusT
    */
   HIAI_StatusT SendDetectionResult(
-      std::shared_ptr<DetectionEngineTransT>& detection_trans,
+      std::shared_ptr<DetectionEngineTransT> &detection_trans,
       bool inference_success = true, std::string err_msg = "");
 
   /**
@@ -158,7 +151,8 @@ HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
    * @param [in] video_image: the input video frame data
    * @return true: success; false: failed
    */
-  bool ConvertVideoFrameToHfbc(const std::shared_ptr<VideoImageParaT>& video_image);
+  bool ConvertVideoFrameToHfbc(
+      const std::shared_ptr<VideoImageParaT> &video_image);
 
   /**
    * @brief get channel id(integer value)

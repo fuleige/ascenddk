@@ -73,7 +73,7 @@ class ObjectDetectionPostProcess : public hiai::Engine {
    * @brief HIAI_DEFINE_PROCESS : override Engine Process logic
    * @[in]: define a input port, a output port
    */
-  HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE);
+  HIAI_DEFINE_PROCESS(INPUT_SIZE, OUTPUT_SIZE)
 
  private:
   /**
