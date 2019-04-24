@@ -43,6 +43,7 @@ WEB_SERVER = None
 APP_SERVER = None
 RUN_SERVER = None
 SERVER_TYPE = ""
+USAGE_INFO = "python3 prensenter_server.py [-h] --app \n\t\t\t\t{face_detection,facial_recognition,video_analysis,display}"
 
 FACE_DETION_MAP = {"web_server": "face_detection.src.web",
                     "app_server": "face_detection.src.face_detection_server"
@@ -73,7 +74,7 @@ def arg_parse():
     global APP_SERVER
     global SERVER_TYPE
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(usage=USAGE_INFO)
     parser.add_argument('--app', type=str, required=True,
                         choices=['face_detection',
                                  'facial_recognition',
